@@ -1,24 +1,21 @@
 import time
-import sys
-sys.path.insert(0, '..')
 
-from google.genai import types
 from tqdm.auto import tqdm
-from agentic_rag.rag_helper import RAGBase
+from rag_helper import RAGBase
 
 
 def calc_price(usage):
-    input_price_per_million = 0.075   # gemini-2.5-flash
-    output_price_per_million = 0.30
+    input_price_per_million = 0.75
+    output_price_per_million = 4.50
 
-    input_cost = (usage.prompt_token_count / 1_000_000) * input_price_per_million
-    output_cost = (usage.candidates_token_count / 1_000_000) * output_price_per_million
+    input_cost = (usage.input_tokens / 1_000_000) * input_price_per_million
+    output_cost = (usage.output_tokens / 1_000_000) * output_price_per_million
     total_cost = input_cost + output_cost
 
     return {
-        "input_cost": f"{input_cost:.10f}",
-        "output_cost": f"{output_cost:.10f}",
-        "total_cost": f"{total_cost:.10f}",
+        "input_cost": input_cost,
+        "output_cost": output_cost,
+        "total_cost": total_cost,
     }
 
 
@@ -32,27 +29,19 @@ def calc_total_price(usages):
     return total_cost
 
 
-def llm_structured(client, instructions, user_prompt, output_type, model="gemini-2.5-flash"):
-    config = types.GenerateContentConfig(
-        system_instruction=instructions,
-        response_mime_type="application/json",
-        response_schema=output_type
-    )
-
-    contents = [
-        types.Content(
-            role="user",
-            parts=[types.Part(text=user_prompt)]
-        )
+def llm_structured(client, instructions, user_prompt, output_type, model="gpt-5.4-mini"):
+    messages = [
+        {"role": "developer", "content": instructions},
+        {"role": "user", "content": user_prompt}
     ]
 
-    response = client.models.generate_content(
+    response = client.responses.parse(
         model=model,
-        contents=contents,
-        config=config
+        input=messages,
+        text_format=output_type
     )
 
-    return response.parsed, response.usage_metadata
+    return response.output_parsed, response.usage
 
 
 def llm_structured_retry(
@@ -60,7 +49,7 @@ def llm_structured_retry(
     instructions,
     user_prompt,
     output_type,
-    model="gemini-2.5-flash",
+    model="gpt-5.4-mini",
     max_retries=3,
 ):
     for attempt in range(max_retries):
@@ -101,27 +90,20 @@ class RAGWithUsage(RAGBase):
         )
 
     def llm(self, prompt):
-        config = types.GenerateContentConfig(
-            system_instruction=self.instructions
-        )
-
-        contents = [
-            types.Content(
-                role="user",
-                parts=[types.Part(text=prompt)]
-            )
+        input_messages = [
+            {"role": "developer", "content": self.instructions},
+            {"role": "user", "content": prompt}
         ]
 
-        response = self.llm_client.models.generate_content(
+        response = self.llm_client.responses.create(
             model=self.model,
-            contents=contents,
-            config=config
+            input=input_messages
         )
 
-        self.last_usage = response.usage_metadata
-        self.usages.append(response.usage_metadata)
+        self.last_usage = response.usage
+        self.usages.append(response.usage)
 
-        return response.text
+        return response.output_text
 
     def total_cost(self):
         return calc_total_price(self.usages)
